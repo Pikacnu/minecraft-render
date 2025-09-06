@@ -2,161 +2,38 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
-  workflow_dispatch:
-    inputs:
-      version:
-        description: 'Minecraft version to download (e.g., 1.19.4)'
-        required: true
-        default: '1.19.4'
-        type: string
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
-  build-and-release:
+  build:
     runs-on: ubuntu-20.04
-    timeout-minutes: 30
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Setup Node.js 16
-      uses: actions/setup-node@v4
-      with:
-        node-version: '16'
-        cache: 'npm'
-        
-    - name: Setup Python 3.9
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-        
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          build-essential \
-          libcairo2-dev \
-          libpango1.0-dev \
-          libjpeg-dev \
-          libgif-dev \
-          librsvg2-dev \
-          wget \
-          curl \
-          jq
-        
-    - name: Clear npm cache and install
-      run: |
-        # Remove problematic files
-        rm -f package-lock.json
-        rm -rf node_modules
-        
-        # Clear npm cache
-        npm cache clean --force
-        
-        # Install with specific flags to avoid native compilation issues
-        npm install --no-optional --legacy-peer-deps
-        
-    - name: Get Minecraft version manifest
-      id: get-manifest
-      run: |
-        VERSION="${{ github.event.inputs.version || '1.19.4' }}"
-        echo "Selected version: $VERSION"
-        
-        MANIFEST_URL="https://launchermeta.mojang.com/mc/game/version_manifest.json"
-        VERSION_URL=$(curl -s $MANIFEST_URL | jq -r ".versions[] | select(.id==\"$VERSION\") | .url")
-        
-        if [ "$VERSION_URL" = "null" ] || [ -z "$VERSION_URL" ]; then
-          echo "Error: Version $VERSION not found"
-          exit 1
-        fi
-        
-        echo "version-url=$VERSION_URL" >> $GITHUB_OUTPUT
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-        
-    - name: Download Minecraft client jar
-      run: |
-        VERSION_URL="${{ steps.get-manifest.outputs.version-url }}"
-        VERSION="${{ steps.get-manifest.outputs.version }}"
-        
-        CLIENT_URL=$(curl -s $VERSION_URL | jq -r '.downloads.client.url')
-        
-        if [ "$CLIENT_URL" = "null" ] || [ -z "$CLIENT_URL" ]; then
-          echo "Error: Could not find client download URL"
-          exit 1
-        fi
-        
-        echo "Downloading Minecraft client $VERSION..."
-        wget -O "minecraft-$VERSION.jar" "$CLIENT_URL"
-        
-        if [ ! -f "minecraft-$VERSION.jar" ]; then
-          echo "Error: Failed to download Minecraft client"
-          exit 1
-        fi
-        
-        echo "Successfully downloaded minecraft-$VERSION.jar"
-        ls -la "minecraft-$VERSION.jar"
-        
-    - name: Run tests
-      run: |
-        npm test || echo "Tests completed with warnings"
-      
-    - name: Generate render files
-      run: |
-        mkdir -p generated-files
-        echo "Processing Minecraft jar and generating render files..."
-        
-        if [ -d "test-data" ]; then
-          cp -r test-data/* generated-files/ 2>/dev/null || true
-        fi
-        
-        rm -f generated-files/test.jar 2>/dev/null || true
-        rm -f generated-files/.gitignore 2>/dev/null || true
-        
-        echo "Generated files:"
-        ls -la generated-files/ 2>/dev/null || echo "No generated files directory found"
-        
-    - name: Create release package
-      run: |
-        VERSION="${{ steps.get-manifest.outputs.version }}"
-        PACKAGE_NAME="minecraft-render-$VERSION"
-        
-        mkdir -p release/$PACKAGE_NAME
-        
-        if [ -d "generated-files" ] && [ "$(ls -A generated-files)" ]; then
-          cp -r generated-files/* release/$PACKAGE_NAME/
-        fi
-        
-        cp "minecraft-$VERSION.jar" "release/$PACKAGE_NAME/"
-        
-        cat > "release/$PACKAGE_NAME/README.md" << EOF
-        # Minecraft Render - Version $VERSION
-        
-        This package contains render files generated from Minecraft $VERSION.
-        
-        ## Contents
-        - Generated render files
-        - Minecraft client jar ($VERSION)
-        
-        Generated on: $(date -u)
-        Build: ${{ github.run_number }}
-        Commit: ${{ github.sha }}
-        EOF
-        
-        cd release
-        zip -r "../$PACKAGE_NAME.zip" "$PACKAGE_NAME/"
-        cd ..
-        
-        echo "Created release package: $PACKAGE_NAME.zip"
-        ls -la "$PACKAGE_NAME.zip"
-        
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: minecraft-render-${{ steps.get-manifest.outputs.version }}
-        path: |
-          generated-files/**
-          minecraft-*.jar
-          *.zip
-        retention-days: 30
-        if-no-files-found: warn
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.8
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.8'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '16'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential
+
+      - name: Delete package-lock.json to avoid version conflicts
+        run: rm -f package-lock.json
+
+      - name: Install npm dependencies
+        run: npm install --legacy-peer-deps
+
+      - name: Run tests
+        run: npm test
