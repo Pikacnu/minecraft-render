@@ -26,12 +26,32 @@ jobs:
         node-version: '18'
         cache: 'npm'
         
-    - name: Install dependencies
-      run: npm install
-      
     - name: Install system dependencies
-      run: sudo apt-get install -y xvfb wget curl jq
-      
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          xvfb \
+          wget \
+          curl \
+          jq \
+          build-essential \
+          libxi-dev \
+          libglu1-mesa-dev \
+          libglew-dev \
+          pkg-config \
+          libgl1-mesa-dev \
+          libegl1-mesa-dev \
+          libgles2-mesa-dev \
+          python3-dev
+        
+    - name: Install dependencies with legacy peer deps
+      run: |
+        # Delete package-lock.json to avoid version conflicts
+        rm -f package-lock.json
+        
+        # Install with legacy peer deps to handle deprecated packages
+        npm install --legacy-peer-deps
+        
     - name: Get Minecraft version manifest
       id: get-manifest
       run: |
@@ -78,7 +98,10 @@ jobs:
         ls -la "minecraft-$VERSION.jar"
         
     - name: Run tests
-      run: xvfb-run --auto-servernum npm test
+      run: |
+        # Set display for headless testing
+        export DISPLAY=:99.0
+        xvfb-run --auto-servernum --server-args="-screen 0 1024x768x24" npm test
       
     - name: Generate render files
       run: |
@@ -91,14 +114,16 @@ jobs:
         echo "Processing Minecraft jar and generating render files..."
         
         # Copy any generated files to the output directory
-        cp -r test-data/* generated-files/ 2>/dev/null || true
+        if [ -d "test-data" ]; then
+          cp -r test-data/* generated-files/ 2>/dev/null || true
+        fi
         
         # Remove unwanted files
         rm -f generated-files/test.jar 2>/dev/null || true
         rm -f generated-files/.gitignore 2>/dev/null || true
         
         echo "Generated files:"
-        ls -la generated-files/
+        ls -la generated-files/ 2>/dev/null || echo "No generated files directory found"
         
     - name: Create release package
       run: |
@@ -108,8 +133,10 @@ jobs:
         # Create release directory
         mkdir -p release/$PACKAGE_NAME
         
-        # Copy generated files
-        cp -r generated-files/* release/$PACKAGE_NAME/
+        # Copy generated files if they exist
+        if [ -d "generated-files" ] && [ "$(ls -A generated-files)" ]; then
+          cp -r generated-files/* release/$PACKAGE_NAME/
+        fi
         
         # Copy the Minecraft jar
         cp "minecraft-$VERSION.jar" "release/$PACKAGE_NAME/"
@@ -125,6 +152,8 @@ jobs:
         - Minecraft client jar ($VERSION)
         
         Generated on: $(date -u)
+        Build: ${{ github.run_number }}
+        Commit: ${{ github.sha }}
         EOF
         
         # Create zip package
@@ -140,10 +169,11 @@ jobs:
       with:
         name: minecraft-render-${{ steps.get-manifest.outputs.version }}
         path: |
-          generated-files/*
+          generated-files/**
           minecraft-*.jar
           *.zip
         retention-days: 30
+        if-no-files-found: warn
         
     - name: Create Release
       if: github.event_name == 'workflow_dispatch'
@@ -166,6 +196,7 @@ jobs:
           
           **Build:** ${{ github.run_number }}
           **Commit:** ${{ github.sha }}
+          **Date:** $(date -u)
         draft: false
         prerelease: false
         
